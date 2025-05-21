@@ -1,17 +1,19 @@
 package com.example.sendmessagewhatsapp
 
+import android.Manifest
 import android.annotation.SuppressLint
+import android.content.ContentValues.TAG
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.annotation.RequiresApi
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
-import androidx.compose.material.*
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -34,15 +36,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.content.ContextCompat.startActivity
 import com.example.sendmessagewhatsapp.ui.theme.SendMessageWhatsappTheme
 import androidx.core.net.toUri
 import com.example.sendmessagewhatsapp.ui.theme.greenColor
+import java.net.URLEncoder
 
 class MainActivity : ComponentActivity() {
-
-    var contactName: String = ""
-    var contactNumber: String = ""
 
     @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
     @OptIn(ExperimentalMaterial3Api::class)
@@ -76,22 +75,84 @@ class MainActivity : ComponentActivity() {
                                 })
                         }) {
 
-                        sendWhatsAppMessage(context = LocalContext.current)
+                        SendWhatsAppMessage(context = LocalContext.current)
 
                     }
                 }
             }
         }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (!hasNotificationPerm()) {
+                requestMultiplePermissions.launch(
+                    arrayOf(
+                        Manifest.permission.POST_NOTIFICATIONS,
+                        Manifest.permission.ACCESS_FINE_LOCATION
+                    )
+                )
+            } else {
+                checkLocationPerm()
+            }
+        } else {
+            checkLocationPerm()
+        }
+    }
+
+private val requestMultiplePermissions = registerForActivityResult(
+    ActivityResultContracts.RequestMultiplePermissions()
+) { permissions ->
+    permissions.entries.forEach {
+        Log.d("DEBUG", "${it.key} = ${it.value}")
+        if (it.key == "android.permission.POST_NOTIFICATIONS" && it.value) {
+            askForBGPermission()
+        }
     }
 }
 
+private val requestLocationPerm = registerForActivityResult(
+    ActivityResultContracts.RequestPermission()
+) { isGranted ->
+    if (isGranted) {
+        askForBGPermission()
+    } else {
+        Log.d(TAG, "Permission is not $isGranted")
+    }
+}
+
+private val requestBGLocationPerm = registerForActivityResult(
+    ActivityResultContracts.RequestPermission()
+) { isGranted ->
+    if (isGranted) {
+        Log.d(TAG, "Background Permission is $isGranted")
+    } else {
+        Log.d(TAG, "Background Permission is not $isGranted")
+    }
+}
+
+private fun checkLocationPerm() {
+    if (!hasLocationPermission()) {
+        requestLocationPerm.launch(
+            Manifest.permission.ACCESS_FINE_LOCATION
+        )
+    } else {
+        askForBGPermission()
+    }
+}
+
+private fun askForBGPermission() {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        if (!hasBGLocationPermission()) {
+            requestBGLocationPerm.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+        }
+    }
+}
+}
+
+
 
 @Composable
-fun sendWhatsAppMessage(context: Context) {
+fun SendWhatsAppMessage(context: Context) {
 
-    val message = remember {
-        mutableStateOf("")
-    }
     val phoneNumber = remember {
         mutableStateOf("+507")
     }
@@ -107,7 +168,7 @@ fun sendWhatsAppMessage(context: Context) {
 
         Text(
 
-            text = "Enviar Mensaje a WhatsApp",
+            text = "Estoy perdido, por favor encuentrenme",
             color = greenColor,
             fontSize = 20.sp,
             fontWeight = FontWeight.Bold
@@ -130,29 +191,23 @@ fun sendWhatsAppMessage(context: Context) {
             singleLine = true,
         )
 
-        Spacer(modifier = Modifier.height(10.dp))
-
-        TextField(
-
-            value = message.value,
-
-            onValueChange = { message.value = it },
-
-            placeholder = { Text(text = "Ingrese su mensaje") },
-
-            modifier = Modifier
-                .padding(16.dp)
-                .fillMaxWidth(),
-
-            textStyle = TextStyle(color = Color.Black, fontSize = 15.sp),
-
-            singleLine = true,
-        )
-
         Spacer(modifier = Modifier.height(20.dp))
 
         Button(
             onClick = {
+                val locationText = LocationService.lastKnownLocation
+
+                if (locationText == "Ubicación no disponible") {
+                    Toast.makeText(
+                        context,
+                        "La ubicación aún no está disponible. Inicia el servicio y espera unos segundos.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    return@Button
+                }
+
+                val message = "Mi ubicacion actual es: $locationText"
+                val encodedMessage = URLEncoder.encode(message, "UTF-8")
 
                 context.startActivity(
                     Intent(
@@ -160,7 +215,7 @@ fun sendWhatsAppMessage(context: Context) {
                         java.lang.String.format(
                             "https://api.whatsapp.com/send?phone=%s&text=%s",
                             phoneNumber.value,
-                            message.value
+                            encodedMessage
                         ).toUri()
                     )
                 )
@@ -172,6 +227,31 @@ fun sendWhatsAppMessage(context: Context) {
         ) {
 
             Text(text = "Enviar Mensaje a WhatsApp")
+        }
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        Button(onClick = {
+            //Start Service
+            Toast.makeText(context, "Service Start button clicked", Toast.LENGTH_SHORT).show()
+            Intent(context, LocationService::class.java).apply {
+                action = LocationService.ACTION_SERVICE_START
+                context.startService(this)
+            }
+        }) {
+            Text(text = "Start Service")
+        }
+        Spacer(modifier = Modifier.padding(12.dp))
+        Button(onClick = {
+            //Stop Service
+            Toast.makeText(context, "Service Stop button clicked", Toast.LENGTH_SHORT).show()
+            Intent(context, LocationService::class.java).apply {
+                action = LocationService.ACTION_SERVICE_STOP
+                context.startService(this)
+            }
+        }) {
+            Text(text = "Stop Service")
+
         }
     }
 }
@@ -185,7 +265,7 @@ fun Greeting(name: String, modifier: Modifier = Modifier) {
     )
 }
 
-@Preview(showBackground = true)
+@Preview(showBackground = true, showSystemUi = true)
 @Composable
 fun GreetingPreview() {
     SendMessageWhatsappTheme {
